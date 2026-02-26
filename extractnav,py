@@ -1,0 +1,46 @@
+import re
+import pdfplumber
+
+
+def extract_nav_mtd_bright_meadow(pdf_path):
+
+    with pdfplumber.open(pdf_path) as pdf:
+        full_text = ""
+        for page in pdf.pages:
+            text = page.extract_text()
+            if text:
+                full_text += text + "\n"
+
+    if not full_text:
+        return None, None
+
+    # -----------------------------------
+    # NAV = Last numeric value under Ending Equity
+    # -----------------------------------
+    # Capture all numbers that look like equity values (comma separated)
+    ending_matches = re.findall(r"\b\d{1,3}(?:,\d{3})+\b", full_text)
+
+    if not ending_matches:
+        return None, None
+
+    # Last large number in document is typically Ending Equity
+    nav_raw = ending_matches[-1]
+    nav_value = float(nav_raw.replace(",", ""))
+
+    # -----------------------------------
+    # MTD = Last percentage in MTD column
+    # -----------------------------------
+    mtd_matches = re.findall(r"\(?-?\d+\.\d+%?\)?", full_text)
+
+    if not mtd_matches:
+        return nav_value, None
+
+    # Take last percentage found
+    mtd_raw = mtd_matches[-1].replace("%", "")
+
+    if mtd_raw.startswith("(") and mtd_raw.endswith(")"):
+        mtd_value = -float(mtd_raw.strip("()"))
+    else:
+        mtd_value = float(mtd_raw)
+
+    return nav_value, mtd_value
