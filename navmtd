@@ -1,0 +1,125 @@
+import os
+import re
+import pdfplumber
+import pandas as pd
+
+
+# ==============================
+# 1️⃣ Fund Code Generator
+# ==============================
+def generate_fund_code(file_name):
+    name = re.sub(r"\.pdf\s*$", "", file_name, flags=re.IGNORECASE)
+    name = re.split(r"nav", name, flags=re.IGNORECASE)[0]
+    name = re.sub(r"[^A-Za-z0-9]", "", name)
+    return name.upper()
+
+
+# ==============================
+# 2️⃣ Extract NAV & MTD
+# ==============================
+def extract_nav_mtd_bright_meadow(pdf_path):
+
+    with pdfplumber.open(pdf_path) as pdf:
+        all_tables = []
+
+        for page in pdf.pages:
+            tables = page.extract_tables()
+            for table in tables:
+                if table:
+                    all_tables.append(pd.DataFrame(table))
+
+    if not all_tables:
+        return None, None
+
+    df = None
+    for table in all_tables:
+        header_row = table.iloc[0].astype(str).str.lower()
+        if (
+            header_row.str.contains("ending").any() and
+            header_row.str.contains("mtd").any()
+        ):
+            df = table
+            break
+
+    if df is None:
+        return None, None
+
+    # Set header
+    df.columns = df.iloc[0]
+    df = df[1:].reset_index(drop=True)
+
+    df.columns = (
+        pd.Series(df.columns)
+        .astype(str)
+        .str.replace("\n", " ", regex=False)
+        .str.strip()
+    )
+
+    # Identify required columns
+    ending_col = [c for c in df.columns if "ending" in c.lower()][0]
+    mtd_col = [c for c in df.columns if "mtd" in c.lower()][0]
+
+    # Clean numeric
+    def clean_number(x):
+        if x is None:
+            return None
+        x = str(x).replace(",", "").strip()
+        if x.startswith("(") and x.endswith(")"):
+            return -float(x.strip("()"))
+        try:
+            return float(x)
+        except:
+            return None
+
+    def clean_percent(x):
+        if x is None:
+            return None
+        x = str(x).replace("%", "").strip()
+        if x.startswith("(") and x.endswith(")"):
+            return -float(x.strip("()"))
+        try:
+            return float(x)
+        except:
+            return None
+
+    df["Ending_clean"] = df[ending_col].apply(clean_number)
+    df["MTD_clean"] = df[mtd_col].apply(clean_percent)
+
+    df_valid = df[df["Ending_clean"].notna()].copy()
+
+    if df_valid.empty:
+        return None, None
+
+    last_row = df_valid.iloc[-1]
+
+    nav_value = last_row["Ending_clean"]
+    mtd_value = last_row["MTD_clean"]
+
+    return nav_value, mtd_value
+
+
+# ==============================
+# 3️⃣ MAIN FOLDER LOOP
+# ==============================
+folder_path = r"C:\YourNewFundFolder"
+
+results = []
+
+for f in os.listdir(folder_path):
+    full_path = os.path.join(folder_path, f)
+
+    if f.lower().endswith(".pdf"):
+
+        fund_code = generate_fund_code(f)
+
+        nav, mtd = extract_nav_mtd_bright_meadow(full_path)
+
+        results.append({
+            "Fund Code": fund_code,
+            "NAV": nav,
+            "MTD": mtd
+        })
+
+
+final_df = pd.DataFrame(results)
+print(final_df)
